@@ -1,5 +1,6 @@
 import random
 
+import util
 import config
 import member_address
 
@@ -36,8 +37,12 @@ class Member:
         encoded_version = bytes(f'{self.version:>04}', config.FORMAT)  # 4-byte
         encoded_uid = bytes(f'{self.uid:>04}', config.FORMAT)          # 4-byte
         encoded_address = self.address.encode()
-        return encoded_version + encoded_uid + encoded_address
+        composit_encoded_message = encoded_version + encoded_uid + encoded_address
+        return composit_encoded_message
 
+    @staticmethod
+    def create(address):
+        return Member(uid=util.get_time()/1000, address=address)
 
 class MemberList:
     def __init__(self):
@@ -96,7 +101,7 @@ class MemberList:
                 break
         
         if exists:
-            del self.set[member]
+            self.set.remove(member)
 
     def find_by_addr(self, addr):
         for cur in self.set:
@@ -106,12 +111,10 @@ class MemberList:
         return False
 
     def remove_by_addr(self, addr):
-        id = 0
         for cur in self.set:
             if cur.address.equals(addr):
-                del self.set[id]
+                self.set.remove(cur)
                 break
-            id += 1
 
     def random_members(self, count):
         if (self.get_size() == 0):
@@ -136,7 +139,7 @@ class MemberList:
 
 def test():
     m = Member()
-    m.address = member_address.from_string('127.0.0.1:8080')
+    m.address = member_address.Address.from_string('127.0.0.1:8080')
     encoded_member = m.encode()
 
     n = Member()
@@ -145,7 +148,7 @@ def test():
     print(f'{len(encoded_member)} and {bytes_decoded} -> {n.address.to_string()}')
 
     
-    n.address = member_address.from_string('127.0.0.1:7172')
+    n.address = member_address.Address.from_string('127.0.0.1:7172')
 
     ml = MemberList()
     new_members = []
@@ -163,7 +166,7 @@ def test():
     print(m.address.to_string())
 
     new_members = []
-    n.address = member_address.from_string('127.0.0.1:6161')
+    n.address = member_address.Address.from_string('127.0.0.1:6161')
     new_members.append(n)
 
     ms = ml.random_members(2)

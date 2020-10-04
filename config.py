@@ -19,6 +19,18 @@ MAX_OUTPUT_MESSAGES   = 100
 # The time interval in milliseconds that determines how often the Gossip tick event should be triggered.
 GOSSIP_TICK_INTERVAL  = 1000
 
+# String for mat multi-addr
+MULTI_ADDR_FORMAT = f'/ip/xxx.xxx.xxx.xxx/port/xxxxx'
+
+# Size of a multi-addr address
+MAX_MEMBER_ADDRESS_SIZE = len(MULTI_ADDR_FORMAT)
+
+# Size of a single member
+CLUSTER_MEMBER_SIZE = (4 + 4 + MAX_MEMBER_ADDRESS_SIZE)
+
+# Membership list can grop really big.
+MEMBER_LIST_SYNC_SIZE = (MESSAGE_MAX_SIZE / CLUSTER_MEMBER_SIZE)
+
 DATA_LOG_SIZE  = 25
 
 # Gossip spread
@@ -28,3 +40,5 @@ GOSSIP_BROADCAST = 2
 
 
 FORMAT = 'utf-8'
+
+LOG_FORMATTING = '%(asctime)-15s [%(levelname)s] %(message)s'

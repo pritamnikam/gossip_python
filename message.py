@@ -1,6 +1,8 @@
 import config
-import member
 import vector_clock
+import member_address
+import vector_clock
+import member
 
 MESSAGE_HELLO_TYPE = 0x01
 MESSAGE_WELCOME_TYPE = 0x02
@@ -41,12 +43,13 @@ class Hello(Message):
     def encode(self):
         encoded_message = Message.encode(self)
         encoded_member = self.this_member.encode()
-        return encoded_message + encoded_member
+        composit_encoded_message = encoded_message + encoded_member
+        return composit_encoded_message
 
-    def decode(self, message):
-        bytes_decoded = Message.decode(self, message)
+    def decode(self, buffer):
+        bytes_decoded = Message.decode(self, buffer)
         self.this_member = member.Member()
-        bytes_decoded += self.this_member.decode(message[bytes_decoded:])
+        bytes_decoded += self.this_member.decode(buffer[bytes_decoded:])
         return bytes_decoded
 
 class Welcome(Message):
@@ -72,28 +75,29 @@ class Welcome(Message):
 class MemberList(Message):
     def __init__(self, message_type, sequence_num):
         Message.__init__(self, message_type, sequence_num)
-        self.members_n = 0
         self.members = []
 
     def encode(self):
         encoded_message = Message.encode(self)
-        encoded_members_n = bytes(f'{self.members_n:>04}', config.FORMAT)  # 4-byte
-        encoded_composit_message = encoded_message + encoded_members_n
-        for member in self.members:
-            encoded_message = member.encode()
+        encoded_members_length = bytes(f'{len(self.members):>04}', config.FORMAT)  # 4-byte
+        encoded_composit_message = encoded_message + encoded_members_length
+        for mbr in self.members:
+            encoded_message = mbr.encode()
             encoded_composit_message += encoded_message
         
         return encoded_composit_message
 
     def decode(self, buffer):
         bytes_decoded = Message.decode(self, buffer)
-        self.members_n = int(buffer[bytes_decoded:bytes_decoded+4].decode(config.FORMAT).strip()) # 4-bytes
-        
+        members_length = int(buffer[bytes_decoded:bytes_decoded+4].decode(config.FORMAT).strip()) # 4-bytes
+              
+        i = 0
         offset = bytes_decoded + 4
-        for i in range(self.members_n):
-            member = member.Member()
-            offset += member.decode(buffer[offset:])
-            self.members.append(member)
+        while(i < members_length):
+            i += 1
+            mbr = member.Member()
+            offset += mbr.decode(buffer[offset:])
+            self.members.append(mbr)
         
         return offset
 
@@ -115,25 +119,24 @@ class Ack(Message):
 class Data(Message):
     def __init__(self, message_type, sequence_num):
         Message.__init__(self, message_type, sequence_num)
-        self.data_version = vector_clock.VectorClock()
-        self.data_size = 0
-        self.data = b''
+        self.data_version = vector_clock.VectorRecord()
+        self.data = []
 
     def encode(self):
         encoded_message = Message.encode(self)
         encoded_data_version = self.data_version.encode()
-        encoded_data_size = bytes(f'{self.data_size:>04}', config.FORMAT)  # 4-byte
-        encoded_data = bytes(f'{self.data}', config.FORMAT)  # 4-byte
+        encoded_data = bytes(f'{self.data}', config.FORMAT)             
+        encoded_data_size = bytes(f'{len(encoded_data):>04}', config.FORMAT)  # 4-byte
         return encoded_message + encoded_data_version + encoded_data_size + encoded_data
 
     def decode(self, buffer):
         bytes_decoded = Message.decode(self, buffer)
-        self.data_version = vector_clock.VectorClock()
+        self.data_version = vector_clock.VectorRecord()
         bytes_decoded += self.data_version.decode(buffer[bytes_decoded:])
-
-        self.data_size = int(buffer[bytes_decoded:bytes_decoded+4].decode(config.FORMAT).strip()) # 4-bytes
-        self.data = buffer[bytes_decoded+4:].decode(config.FORMAT)
-        return bytes_decoded + 4 + self.data_size
+        data_size = int(buffer[bytes_decoded:bytes_decoded+4].decode(config.FORMAT).strip()) # 4-bytes
+        bytes_decoded += 4
+        self.data = buffer[bytes_decoded:data_size+bytes_decoded].decode(config.FORMAT)
+        return bytes_decoded + data_size
 
 class Status(Message):
     def __init__(self, message_type, sequence_num):
@@ -151,20 +154,22 @@ class Status(Message):
         bytes_decoded += self.data_version.decode(buffer[bytes_decoded:])
         return bytes_decoded
 
-class MessageFactory:
-    def __init__(self):
-        pass
+def decode_type(buffer):
+    if (len(buffer) < MESSAGE_MIN_SIZE):
+        return False
 
-    def create(self, message_type, sequence_number):
-        if message_type == MESSAGE_HELLO_TYPE:
-            return Hello(message_type, sequence_number)
-        if message_type == MESSAGE_WELCOME_TYPE:
-            return Welcome(message_type, sequence_number)
-        if message_type == MESSAGE_ACK_TYPE:
-            return Ack(message_type, sequence_number)
+    return int(buffer[:2].decode(config.FORMAT).strip()) # 2-byte
+
+
+
 
 def test():
+    m = member.Member()
+    m.uid = '3243'
+    m.address = member_address.Address.from_string('127.0.0.1:8080')
+
     msg = Hello(MESSAGE_HELLO_TYPE, 10)
+    msg.this_member = m
     encoded_msg = msg.encode()
 
     test = Hello(0, 0)
@@ -193,11 +198,20 @@ def test():
     bytes_decoded = y.decode(encoded_msg)
     print(f"{len(encoded_msg)} and decode: {bytes_decoded}")
 
+    
+    # Test Data
+    vr = vector_clock.VectorRecord()
+    vr.sequence_number = 100
+    vr.member_id = vector_clock.create_member_id(m)
+
+    dt = Data(MESSAGE_DATA_TYPE, 100)
+    dt.data_version = vr
+    dt.data = bytes(f'test bytes', config.FORMAT)
+
+    encoded_msg = dt.encode()
+    dt1 = Data(MESSAGE_DATA_TYPE, 0)
+    bytes_decoded = dt1.decode(encoded_msg)
+    print(f"{len(encoded_msg)} and decode: {bytes_decoded}, {dt1.data}")
 
 # test()
 
-def decode_type(buffer, buffer_size):
-    if (buffer_size < MESSAGE_MIN_SIZE):
-        return False
-
-    return int(buffer[:2].decode(config.FORMAT).strip()) # 2-byte

@@ -1,6 +1,5 @@
-import re
-
 import config
+import util
 
 class Address:
     def __init__(self):
@@ -16,14 +15,15 @@ class Address:
 
     def encode(self):
         multi_addr = self.to_multiaddr()
-        encoded_addr_length = bytes(f'{len(multi_addr):>04}', config.FORMAT)   # 4-bytes
         encoded_addr = bytes(f'{multi_addr}', config.FORMAT)
-        return encoded_addr_length + encoded_addr
+        encoded_addr_length = bytes(f'{len(encoded_addr):>04}', config.FORMAT)   # 4-bytes
+        composit_encoded_message = encoded_addr_length + encoded_addr
+        return composit_encoded_message
 
     def decode(self, buffer):
         addr_length = int(buffer[:4].decode(config.FORMAT).strip()) # 4-bytes
         multi_addr = buffer[4:addr_length+4].decode(config.FORMAT)  # addr_length-bytes
-        address = from_multiaddr(multi_addr)
+        address = Address.from_multiaddr(multi_addr)
         self.ip = address.ip
         self.port = address.port
         return addr_length + 4
@@ -40,36 +40,34 @@ class Address:
     def ip_address(self):
         return {self.ip}
 
-def validate_ip(ip):
-    pat = re.compile("\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}")
-    return pat.match(ip)
+    @staticmethod
+    def from_string(address):
+        try:
+            split_list = address.split(':')
+            if len(split_list) !=2  or not util.is_valid_ip_address(split_list[0]):
+                return False
 
-def from_string(address):
-    try:
-        split_list = address.split(':')
-        if len(split_list) !=2  or not validate_ip(split_list[0]):
+            addr = Address()    
+            addr.ip = split_list[0]
+            addr.port = int(split_list[1].strip())
+            return addr
+        except:
             return False
 
-        addr = Address()    
-        addr.ip = split_list[0]
-        addr.port = int(split_list[1].strip())
-        return addr
-    except:
-        return False
-
-def from_multiaddr(address):
-    try:
-        split_list = address.split('/')
-        if len(split_list) != 5 or not validate_ip(split_list[2]):
+    @staticmethod
+    def from_multiaddr(address):
+        try:
+            split_list = address.split('/')
+            if len(split_list) != 5 or not util.is_valid_ip_address(split_list[2]):
+                return False
+            
+            addr = Address()    
+            addr.ip = split_list[2]
+            addr.port = int(split_list[4].strip())
+            return addr
+        except Exception as e:
+            print('Exception', str(e))
             return False
-        
-        addr = Address()    
-        addr.ip = split_list[2]
-        addr.port = int(split_list[4].strip())
-        return addr
-    except Exception as e:
-        print('Exception', str(e))
-        return False
 
 
 def test():
@@ -80,10 +78,10 @@ def test():
     print(addr.to_string())
     print(addr.to_multiaddr())
 
-    a = from_string(addr.to_string())
+    a = Address.from_string(addr.to_string())
     print(a.to_multiaddr())
 
-    b = from_multiaddr(addr.to_multiaddr())
+    b = Address.from_multiaddr(addr.to_multiaddr())
     print(b.to_string())
 
     encoded_addr = addr.encode()

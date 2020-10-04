@@ -5,6 +5,8 @@ class MessageEnvolopeIn:
         self.sender = sender
         self.buffer = buffer
 
+
+
 class MessageEnvolopeOut:
     def __init__(self,
                  sequence_number,
@@ -17,6 +19,11 @@ class MessageEnvolopeOut:
         self.buffer = buffer
         self.recipient = recipient
         self.max_attempts = max_attempts
+
+
+
+
+
 
 def test():
     a = member_address.Address()

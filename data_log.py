@@ -1,50 +1,61 @@
 import vector_clock
 import message
 import config
+import member
+import member_address
 
 
 class DataLogRecord:
     def __init__(self):
         self.version = vector_clock.VectorRecord()
-        self.data_size = 0
         self.data = []
 
-    def create_message(self):
-        msg = message.Data(message.MESSAGE_DATA_TYPE, 0)
-        msg.data_version.Copy(self.version)
-        msg.data = self.data.copy()
-        msg.data_size = self.data_size
-        return msg
+    def create_data_message(self):
+        data = message.Data(message.MESSAGE_DATA_TYPE, 0)
+        data.data_version.copy(self.version)
+        data.data = self.data
+        return data
+
 
 
 class DataLog:
     def __init__(self):
-        self.messages = []  # DataLogRecord
-        self.size = 0
+        self.records = []  # DataLogRecord
         self.current_idx = 0
 
-    def gossip_data_log(self, msg):
-        record = None
-        for i in range(self.size):
-            # Save only the latest data message from each originator.
-            if (self.messages[i].version.member_id == msg.data_version.member_id):
-                record = self.messages[i]
-                record.version.sequence_number = msg.data_version.sequence_number
-                break
+    def add_data_log(self, data_message):
+        for record in self.records:
+            if (record.version.member_id == data_message.data_version.member_id):
+                # Save only the latest data message from each originator.
+                record.data = data_message.data
+                record.version.sequence_number = data_message.data_version.sequence_number
+                return
 
-        if (record == None):
-            # The data message with the same originator was not found.
-            new_idx = self.current_idx
-            record = self.messages[new_idx]
-            record.version.copy(msg.data_version)
+        # The data message with the same originator was not found.
+        record = DataLogRecord()
+        record.data = data_message.data
+        record.version.copy(data_message.data_version)
+        self.records.append(record)
 
-            if (self.size < config.DATA_LOG_SIZE):
-                self.size += 1
 
-            self.current_idx += 1
-            if (self.current_idx >= config.DATA_LOG_SIZE):
-                self.current_idx = 0
-        
-        record.data_size = msg.data_size
-        record.data = msg.data.copy()
+def test():
+    m = member.Member()
+    m.uid = '3243'
+    m.address = member_address.Address.from_string('127.0.0.1:8080')    
+    vr = vector_clock.VectorRecord()
+    vr.sequence_number = 100
+    vr.member_id = vector_clock.create_member_id(m)
+
+    dt = message.Data(message.MESSAGE_DATA_TYPE, 100)
+    dt.data_version = vr
+    dt.data = bytes(f'test bytes', config.FORMAT)
+
+    dl = DataLog()
+    dl.add_data_log(dt)
+
+    record = dl.records[0]
+    dt1 = record.create_data_message()
+    print('dt1 : ', dt1.data)
+
+# test()
 

@@ -2,99 +2,167 @@ import queue
 
 import config
 import state
-import message
 import member
-import error
 import vector_clock
 import data_log
 import message_service
 import envolope
-import message_handler
-
+import message_handler_factory
+import member_address
+import util
+import message
+import message_factory
 
 class GossipService:
-    def __init__(self, self_address, data_receiver, data_receiver_context):
+    def __init__(self, self_address, data_receiver, logger):
+        self.logger = logger
         self.input_buffer = []
         self.output_buffer = []
-        self.output_buffer_offset = 0
-
         self.outbound_messages = []
 
         self.sequence_num = 0
         self.data_counter = 0
         self.data_version = vector_clock.VectorClock()
-
         self.state = state.STATE_INITIALIZED
-        self.self_address = member.Member()
+        self.self_address = self_address
+        self.this_member = member.Member.create(self_address)
 
-        self.members = member.MemberList(config.MAX_OUTPUT_MESSAGES)
-
+        self.members = member.MemberList()
         self.data_log = data_log.DataLog()
 
         self.last_gossip_ts = 0
-
         self.data_receiver = data_receiver
-        self.messaging_service = message_service.UDPMessageService()
 
-        self.data_receiver_context = data_receiver_context
-        self.message_handler = message_handler.MessageHandler(self)
+        self.message_handler = message_handler_factory.MessageHandlerFactory.getInstance().getHandler()
+        self.message_handler.set_service(self)
+        self.message_handler.set_logger(self.logger)
+        
+        self.messaging_service = message_service.UDPMessageService(self.logger)
+        self.messaging_service.bind(self_address)
+        self.logger.info("[GossipService] Service started.")
 
     # Send the message to the receipient
     def send(self):
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
-             return False
+            self.logger.warning("Failed to send - not connected.")
+            return False
 
-        pass
+        # get the first message from outbound message queue
+        msg_sent = 0
+        i = 0
+        while i < len(self.outbound_messages):
+            current_msg = self.outbound_messages[i]
+            i += 1
 
-    
+            # The message exceeded the maximum number of attempts.
+            if (current_msg.attempt_num >= current_msg.max_attempts):
+                if (current_msg.max_attempts > 1):
+                    # If the number of maximum attempts is more than 1, then
+                    # the message required acknowledgement but we've never received it.
+                    # Remove node from the list since it's unreachable.
+                    self.members.remove_by_addr(current_msg.recipient)
+
+                    # Quite often the same recipient has several messages in a row.
+                    # Check whether the next message should be removed as well.
+                    j = 1 + i
+                    while j < len(self.outbound_messages):
+                        next_msg = self.outbound_messages[j]
+                        j += 1
+                        if (current_msg.recipient == next_msg.recipient):
+                            self.dequeue_envolope(next_msg)
+                            continue
+                        
+                        break
+
+                    # Remove this message from the queue.
+                    self.dequeue_envolope(current_msg)
+                    continue
+            
+            current_ts = util.get_time()
+
+            # It's not yet time to retry this message.
+            if (current_msg.attempt_num != 0 and
+                (current_msg.attempt_ts + config.MESSAGE_RETRY_INTERVAL) > current_ts):
+                continue
+            
+            # Send to recipient
+            sent = self.messaging_service.send_to(current_msg.buffer, current_msg.recipient)
+            if not sent:
+                self.logger.warning("Failed to send %s - error in messaging service.", current_msg.recipient.to_multiaddr())
+                return False
+            
+            self.logger.info("[GossipService] Message sent to %s", current_msg.recipient.to_multiaddr())
+
+            # increament the attempt counts
+            current_msg.attempt_ts = current_ts
+            current_msg.attempt_num += 1
+            msg_sent += 1
+
+            # The message must be sent only once. Remove it immediately.
+            if (current_msg.max_attempts <= 1):
+                self.dequeue_envolope(current_msg)
+
+        return msg_sent
+
     # Read the message from peer
     def receive(self):
+        # Only receive iff node has requested to join or connected to the cluster.
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
-             return False
+            self.logger.warning("Failed to receive - not connected.")
+            return False
 
-        self.input_buffer, addr = self.messaging_service.recv_from()
-        env = envolope.MessageEnvolopeIn()
-        env.buffer = self.input_buffer
-        env.buffer_size = len(self.input_buffer)
-        env.sender = addr
-        return True
+        # Read the payload from messaging service and add to envolope and dispatch
+        self.input_buffer, sender_address = self.messaging_service.recv_from()
+        self.logger.info("[GossipService] Message received from %s", sender_address.to_multiaddr())
+
+        envolope_in = envolope.MessageEnvolopeIn(self.input_buffer, sender_address)
+        return self.message_handler.handle_new_message(envolope_in)
 
 
     # Join the cluster
     def join(self, seed_nodes):
+        # Node can join only if it's initialized
         if (self.state != state.STATE_INITIALIZED):
+            self.logger.warning("Failed to join - not in init state.")
             return False
 
-        if (seed_nodes == None or len(seed_nodes) == 0):
-            # No seed nodes were provided.
+        # No seed nodes were provided, then it's a supernode
+        if len(seed_nodes) == 0:
+            self.logger.info("[GossipService] Seed node started.")
             self.state = state.STATE_CONNECTED
             return True
         
+        # say hello to all seed nodes to join the cluster
         for node in seed_nodes:
-            self.enqueue_hello(node.addr)
+            self.enqueue_hello(node)
         
+        self.logger.info("[GossipService] Node requested to join the cluster.")
         self.state = state.STATE_JOINING
-        
         return True
+
 
     # Send the data to recipient node
     def send_data(self, payload, recipient):
+        # Only allowed to send data iff node has requested to join or connected to the cluster.
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
-             return False
+            self.logger.warning("Failed to send_data - not connected.")
+            return False
 
         return self.enqueue_data(payload, recipient)
+
 
     # Time tickes before sending next data
     def tick(self):
         if (self.state != state.STATE_CONNECTED):
+            self.logger.warning("Failed to tick - not connected.")
             return False
 
         next_gossip_ts = self.last_gossip_ts + config.GOSSIP_TICK_INTERVAL
-        current_ts = pt_time()
+        current_ts = util.get_time()
         if (next_gossip_ts > current_ts):
             return next_gossip_ts - current_ts
         
-        enqueued_result = self.enqueue_status(None, 0)
+        enqueued_result = self.enqueue_status(None)
         if (enqueued_result < 0):
             return enqueued_result
 
@@ -119,7 +187,7 @@ class GossipService:
 
     # Remove the message from the outbound queue
     def dequeue_envolope(self, env):
-        del self.outbound_messages[env]
+        self.outbound_messages.remove(env)
 
     # Find the message by it's 'sequence_num'
     def find_envolope_by_sequence_num(self, sequence_num):
@@ -133,26 +201,33 @@ class GossipService:
 
     # Hello message
     def enqueue_hello(self, recipient):
-        hello = message.Hello(message.MESSAGE_HELLO_TYPE, 0)
-        hello.this_member = self.self_address
+        self.logger.info("[GossipService] Enque Hello message to %s", recipient.to_multiaddr())
+        hello = message_factory.MessageFactory.getInstance().create(message.MESSAGE_HELLO_TYPE)
+        hello.this_member = self.this_member
         return self.enqueue_message(hello, recipient, config.GOSSIP_DIRECT)
 
     # Ack message
     def enqueue_ack(self, sequence_num, recipient):
-        ack = message.Ack(message.MESSAGE_ACK_TYPE, 0)
+        self.logger.info("[GossipService] Enque Ack message to %s", recipient.to_multiaddr())
+        ack = message_factory.MessageFactory.getInstance().create(message.MESSAGE_ACK_TYPE)
         ack.sequence_num = sequence_num
         return self.enqueue_message(ack, recipient, config.GOSSIP_DIRECT)
 
     # Welcome message
     def enqueue_welcome(self, hello_sequence_num, recipient):
-        welcome = message.Welcome(message.MESSAGE_WELCOME_TYPE, 0)
+        self.logger.info("[GossipService] Enque Welcom message to %s", recipient.to_multiaddr())
+        welcome = message_factory.MessageFactory.getInstance().create(message.MESSAGE_WELCOME_TYPE)
         welcome.hello_sequence_num = hello_sequence_num
-        welcome.this_member = self.self_address
+        welcome.this_member = self.this_member
         return self.enqueue_message(welcome, recipient, config.GOSSIP_DIRECT)
 
     # Staus message
     def enqueue_status(self, recipient):
-        status = message.Status(message.MESSAGE_STATUS_TYPE, 0)
+        if recipient == None:
+            self.logger.info("[GossipService] Gossip the Status message.")
+        else:
+            self.logger.info("[GossipService] Enque Status message to %s", recipient.to_multiaddr())
+        status = message_factory.MessageFactory.getInstance().create(message.MESSAGE_STATUS_TYPE)
         status.data_version.copy(self.data_version)
         spreading_type = config.GOSSIP_DIRECT
         if recipient == None:
@@ -162,29 +237,33 @@ class GossipService:
 
     # Data message
     def enqueue_data(self, payload, recipient):
+        self.logger.info("[GossipService] Enque Data message to %s", recipient.to_multiaddr())
         # Update the local data version.
         self.data_counter += 1
         clock_counter = self.data_counter
-        record = self.data_version.set(self.self_address, clock_counter)
+        record = self.data_version.set_sequence_number_for_member(self.this_member, clock_counter)
+        if not record:
+            return False
 
-        data = message.Data(message.MESSAGE_DATA_TYPE, 0)
+        data = message_factory.MessageFactory.getInstance().create(message.MESSAGE_DATA_TYPE)
         record.copy(data.data_version)
         data.data = payload
         data.data_size = len(payload)
 
         # Add the data to our internal log.
-        self.data_log.gossip_data_log(data)
+        self.data_log.add_data_log(data)
         return self.enqueue_message(data, recipient, config.GOSSIP_DIRECT)
 
     # Data log message
     def enqueue_data_log(self, recipient_version, recipient):
+        self.logger.info("[GossipService] Enque DataLog to %s", recipient.to_multiaddr())
         result = True
-        for i in range(self.data_log.size):
-            record = self.data_log.messages[i]
+        for i in range(len(self.data_log.records)):
+            record = self.data_log.records[i]
             result = recipient_version.compare_with_record(record.version, False)
-            if (result == VC_BEFORE):
+            if (result == vector_clock.VC_BEFORE):
                 # The recipient data version is behind. Enqueue this data payload.
-                data = data_log_create_message(record)
+                data = record.create_data_message()
                 if not data:
                     return False
 
@@ -196,7 +275,8 @@ class GossipService:
 
     # MemberList message
     def enqueue_member_list(self, recipient):
-        member_list = message.MemberList(message.MESSAGE_MEMBER_LIST_TYPE, 0)
+        self.logger.info("[GossipService] Enque MemberList message to %s", recipient.to_multiaddr())
+        member_list = message_factory.MessageFactory.getInstance().create(message.MESSAGE_MEMBER_LIST_TYPE)
 
         members_num = self.members.get_size()
         if (members_num == 0):
@@ -233,17 +313,15 @@ class GossipService:
 
     # Helper to enque mesage to the outbound queue
     def enqueue_message(self, msg, recipient, spreading_type):
-        offset = self.gossip_update_output_buffer_offset()
-        buffer = self.output_buffer[offset:]
-
-        encode_result, max_attempts = self.encode_message(msg)
-        if not encode_result:
+        encoded_msg, max_attempts = self.encode_message(msg)
+        if not encoded_msg:
+            self.logger.warning("Failed to enque message - encode error.")
             return False
 
         # Distribute the message.
         if spreading_type == config.GOSSIP_DIRECT:
             # Send message to a single recipient.
-            return self.enqueue_to_outbound(buffer, max_attempts, recipient)
+            return self.enqueue_to_outbound(encoded_msg, max_attempts, recipient)
         
         if spreading_type == config.GOSSIP_RANDOM:
             # Choose some number of random members to distribute the message.
@@ -252,7 +330,7 @@ class GossipService:
             for member in members:
                 # Create a new envolope for each recipient.
                 # Note: all created envolopes share the same buffer.
-                result = self.enqueue_to_outbound(buffer, max_attempts, member.address)
+                result = self.enqueue_to_outbound(encoded_msg, max_attempts, member.address)
                 if not result:
                     return result
 
@@ -261,7 +339,7 @@ class GossipService:
             for member in self.members.get_set():
                 # Create a new envolope for each recipient.
                 # Note: all created envolopes share the same buffer.
-                result = self.enqueue_to_outbound( buffer, max_attempts, member.address)
+                result = self.enqueue_to_outbound(encoded_msg, max_attempts, member.address)
                 if not result:
                     return result
     
@@ -273,23 +351,20 @@ class GossipService:
         self.sequence_num += 1
         seq_num = self.sequence_num
         new_envolope = envolope.MessageEnvolopeOut(seq_num,
-                                                    buffer,
-                                                    max_attempts,
-                                                    receiver)
-        self.outbound_messages.enqueue(new_envolope)
+                                                   buffer,
+                                                   max_attempts,
+                                                   receiver)
+        self.outbound_messages.append(new_envolope)
         return True
 
-
     # Helper to encode a message
-    def encode_message(msg):
+    def encode_message(self, msg):
         max_attempts = config.MESSAGE_RETRY_ATTEMPTS
-        encode_result = 0
-        
+
         # Serialize the message.
-        msg_type = msg.message_type
         encoded_msg = msg.encode()
 
-        if (msg_type == message.MESSAGE_WELCOME_TYPE or msg_type == message.MESSAGE_ACK_TYPE):
+        if (msg.message_type == message.MESSAGE_WELCOME_TYPE or msg.message_type == message.MESSAGE_ACK_TYPE):
             max_attempts = 1
 
         return encoded_msg, max_attempts
@@ -300,4 +375,3 @@ class GossipService:
         msg.data = record.data
         msg.data_size = record.data_size
         return data
-
