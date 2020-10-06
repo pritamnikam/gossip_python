@@ -28,7 +28,7 @@ class NodeMember(demo_member.DemoMember):
             encoded_message_with_ts = bytes(f'Hi there! {self.previous_data_msg_ts}', config.FORMAT)
             encoded_message_size = bytes(f'{len(encoded_message_with_ts):>04}', config.FORMAT)
             composit_encoded_messsage = encoded_message_size + encoded_message_with_ts
-            self.gossip_daemon.send_data(composit_encoded_messsage, self.seed_addresses[0])
+            self.gossip_daemon.send_data(composit_encoded_messsage)
 
 if __name__ == "__main__":
     LOG_FILE = 'log_demo_node.txt'

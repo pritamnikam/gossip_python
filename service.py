@@ -142,7 +142,7 @@ class GossipService:
 
 
     # Send the data to recipient node
-    def send_data(self, payload, recipient):
+    def send_data(self, payload, recipient=None):
         # Only allowed to send data iff node has requested to join or connected to the cluster.
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
             self.logger.warning("Failed to send_data - not connected.")
@@ -236,8 +236,12 @@ class GossipService:
         return self.enqueue_message(status, recipient, spreading_type)
 
     # Data message
-    def enqueue_data(self, payload, recipient):
-        self.logger.info("[GossipService] Enque Data message to %s", recipient.to_multiaddr())
+    def enqueue_data(self, payload, recipient=None):
+        spreading_type = config.GOSSIP_DIRECT
+        if recipient is None:
+            spreading_type = config.GOSSIP_RANDOM
+
+        self.logger.info("[GossipService] Enque Data message.")
         # Update the local data version.
         self.data_counter += 1
         clock_counter = self.data_counter
@@ -252,7 +256,9 @@ class GossipService:
 
         # Add the data to our internal log.
         self.data_log.add_data_log(data)
-        return self.enqueue_message(data, recipient, config.GOSSIP_DIRECT)
+
+        # Enque the data to outbound message queue to be dispatched
+        return self.enqueue_message(data, recipient, spreading_type)
 
     # Data log message
     def enqueue_data_log(self, recipient_version, recipient):
@@ -294,9 +300,7 @@ class GossipService:
                 member_list.members = members_to_send
                 member_list.members_n = count
 
-                result = self.enqueue_message(member_list, 
-                                             recipient,
-                                             config.GOSSIP_DIRECT)
+                result = self.enqueue_message(member_list, recipient, config.GOSSIP_DIRECT)
                 if not result:
                     return False
 
