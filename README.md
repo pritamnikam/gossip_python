@@ -20,7 +20,33 @@ Since UDP is not a reliable protocol, it imposes some restrictions on a maximum 
 
 So far neither the message delivery order nor the delivery itself have strong guarantees.
 
-NOTE: at this point Gossip Protocol is in active development stage. It can be used for experiments but not for production solutions. A lot of things have to be done in order to release the first version.
+## How it's designed
+
+* GossipService. A core service responsible for the peer-to-peer communication and composeses necessary data structures used while liftime of the service. This is only exposed service from this package.
+
+* State. The nodes have lifetime states - INITIALIZED, JOINING, CONNECTED, DISCONNECTED and DISTROYED. Node starts with 'INITIALIZED' state does necessary data structure initializations required for joining the cluster, then temporaily moved to 'JOINING' state. In this state, it attempts to conenct to the cluster by sending a Hello message to the seed nodes. On receiving a Welcome message from the seed node, state transit to 'CONNECTED'. Node stays in this state
+
+* Message. Every 'Message' has a fixed-size header of 8-bytes with 2-bytes 'message_type', 2-bytes 'reserved' bytes and 4-byte 'sequence_number'. Messages are encoded in 'utf-8' format before enclosed into 'MessageEnvolopeOut' and enqued to a outbound message queue before get dispatched. The envolope holds other useful meta information like 'recipient' address, 'attempt_num' and 'max_attempts' allowed for that type of message, for example, the maximum attempts are capped to '3' (configurable) except for Welcome and Ack messsages - they can be maximum 1.
+
+* MessageService.
+Gossip protocol uses UDP based messaging service to send and receive messages. GossipService periodically dispatches the messages from outbound message queues to the recipient.
+
+* Spread Type. The Gossip protocol supports 3 types of message spreads – DIRECT, RANDOM and BROADCAST, to achieve the anti-entropy infection style message dissemination.
+
+* MessageHandler. Once an encoded buffer is read over UDP socket, it gets enclosed into MessageEnvolopeIn and dispatch to the respective handler. The message header decoding shall confirm the type of the incoming message and respective message handler comes into action.
+
+In short, the pipeline will be shown below:
+
+[Message]
+  -> [Message].encode
+     -> Envolope{[Message].encode}
+        -> socket.send_to
+
+socket->recv_from
+  -> Envolope{buffer}
+    -> buffer.decode
+       -> [Message]
+          -> handle
 
 
 ## How to use
