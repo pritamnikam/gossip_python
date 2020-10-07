@@ -40,11 +40,9 @@ class DemoMember:
         # Runs a thread that does the I/O.
         self.run()
 
-
     def stop(self):
         self.gossip_daemon.stop()
         sys.exit(0)
-
 
     def run(self):
         self.logger.info('Staring a thread for I/O operations.')
@@ -58,7 +56,8 @@ class DemoMember:
         # infinite loop to perform I/O:
         while True:
             endpoints = [daemon_fd]
-            read, _, error = select.select(endpoints, [], [], self.poll_interval)
+            poll_internal_in_seconds = self.poll_interval / 1000
+            read, _, error = select.select(endpoints, [], [], poll_internal_in_seconds)
 
             for sock in read:
                 if sock is daemon_fd:
@@ -79,8 +78,8 @@ class DemoMember:
 
             # Try to trigger the Gossip tick event and recalculate
             # the poll interval.
-            poll_interval = self.gossip_daemon.tick()
-            if (poll_interval < 0):
+            self.poll_interval = self.gossip_daemon.tick()
+            if (self.poll_interval < 0):
                 self.logger.warning('Poll interval has expired.')
                 return False
 

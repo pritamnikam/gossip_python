@@ -44,12 +44,13 @@ class GossipService:
     # Send the message to the receipient
     def send(self):
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
-            self.logger.warning("Failed to send - not connected.")
+            self.logger.warning("[GossipService] Failed to send - not connected.")
             return False
 
         # get the first message from outbound message queue
         msg_sent = 0
         i = 0
+        self.logger.info("[GossipService] Messages to be dispatched are %s", len(self.outbound_messages))
         while i < len(self.outbound_messages):
             current_msg = self.outbound_messages[i]
             i += 1
@@ -74,9 +75,9 @@ class GossipService:
                         
                         break
 
-                    # Remove this message from the queue.
-                    self.dequeue_envolope(current_msg)
-                    continue
+                # Remove this message from the queue.
+                self.dequeue_envolope(current_msg)
+                continue
             
             current_ts = util.get_time()
 
@@ -88,15 +89,15 @@ class GossipService:
             # Send to recipient
             sent = self.messaging_service.send_to(current_msg.buffer, current_msg.recipient)
             if not sent:
-                self.logger.warning("Failed to send %s - error in messaging service.", current_msg.recipient.to_multiaddr())
+                self.logger.warning("[GossipService] Failed to send %s - error in messaging service.", current_msg.recipient.to_multiaddr())
                 return False
             
-            self.logger.info("[GossipService] Message sent to %s", current_msg.recipient.to_multiaddr())
-
             # increament the attempt counts
             current_msg.attempt_ts = current_ts
             current_msg.attempt_num += 1
             msg_sent += 1
+
+            self.logger.info("[GossipService] %s Messages sent to %s", msg_sent, current_msg.recipient.to_multiaddr())
 
             # The message must be sent only once. Remove it immediately.
             if (current_msg.max_attempts <= 1):
@@ -108,7 +109,7 @@ class GossipService:
     def receive(self):
         # Only receive iff node has requested to join or connected to the cluster.
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
-            self.logger.warning("Failed to receive - not connected.")
+            self.logger.warning("[GossipService] Failed to receive - not connected.")
             return False
 
         # Read the payload from messaging service and add to envolope and dispatch
@@ -123,7 +124,7 @@ class GossipService:
     def join(self, seed_nodes):
         # Node can join only if it's initialized
         if (self.state != state.STATE_INITIALIZED):
-            self.logger.warning("Failed to join - not in init state.")
+            self.logger.warning("[GossipService] Failed to join - not in init state.")
             return False
 
         # No seed nodes were provided, then it's a supernode
@@ -145,7 +146,7 @@ class GossipService:
     def send_data(self, payload, recipient=None):
         # Only allowed to send data iff node has requested to join or connected to the cluster.
         if (self.state != state.STATE_JOINING and self.state != state.STATE_CONNECTED):
-            self.logger.warning("Failed to send_data - not connected.")
+            self.logger.warning("[GossipService] Failed to send_data - not connected.")
             return False
 
         return self.enqueue_data(payload, recipient)
@@ -154,7 +155,7 @@ class GossipService:
     # Time tickes before sending next data
     def tick(self):
         if (self.state != state.STATE_CONNECTED):
-            self.logger.warning("Failed to tick - not connected.")
+            self.logger.warning("[GossipService] Failed to tick - not connected.")
             return False
 
         next_gossip_ts = self.last_gossip_ts + config.GOSSIP_TICK_INTERVAL
@@ -242,6 +243,7 @@ class GossipService:
             spreading_type = config.GOSSIP_RANDOM
 
         self.logger.info("[GossipService] Enque Data message.")
+
         # Update the local data version.
         self.data_counter += 1
         clock_counter = self.data_counter
@@ -252,7 +254,6 @@ class GossipService:
         data = message_factory.MessageFactory.getInstance().create(message.MESSAGE_DATA_TYPE)
         record.copy(data.data_version)
         data.data = payload
-        data.data_size = len(payload)
 
         # Add the data to our internal log.
         self.data_log.add_data_log(data)
@@ -319,23 +320,27 @@ class GossipService:
     def enqueue_message(self, msg, recipient, spreading_type):
         encoded_msg, max_attempts = self.encode_message(msg)
         if not encoded_msg:
-            self.logger.warning("Failed to enque message - encode error.")
+            self.logger.warning("[GossipService] Failed to enque message - encode error.")
             return False
 
         # Distribute the message.
         if spreading_type == config.GOSSIP_DIRECT:
             # Send message to a single recipient.
             return self.enqueue_to_outbound(encoded_msg, max_attempts, recipient)
-        
+
         if spreading_type == config.GOSSIP_RANDOM:
             # Choose some number of random members to distribute the message.
             members = self.members.random_members(config.MESSAGE_RUMOR_FACTOR)
+            if not members:
+               self.logger.warning("[GossipService] Member list is empty.")
+               return False
 
             for member in members:
                 # Create a new envolope for each recipient.
                 # Note: all created envolopes share the same buffer.
                 result = self.enqueue_to_outbound(encoded_msg, max_attempts, member.address)
                 if not result:
+                    self.logger.warning("[GossipService] Failed to enque message - enque to outbound queue - GOSSIP_RANDOM.")
                     return result
 
         if spreading_type == config.GOSSIP_BROADCAST:
@@ -345,6 +350,7 @@ class GossipService:
                 # Note: all created envolopes share the same buffer.
                 result = self.enqueue_to_outbound(encoded_msg, max_attempts, member.address)
                 if not result:
+                    self.logger.warning("[GossipService] Failed to enque message - enque to outbound queue - GOSSIP_BROADCAST")
                     return result
     
         return True
@@ -367,7 +373,7 @@ class GossipService:
 
         # Serialize the message.
         encoded_msg = msg.encode()
-
+        self.logger.info('[GossipService] Serialized message %s of size %s', msg.message_type, len(encoded_msg))
         if (msg.message_type == message.MESSAGE_WELCOME_TYPE or msg.message_type == message.MESSAGE_ACK_TYPE):
             max_attempts = 1
 

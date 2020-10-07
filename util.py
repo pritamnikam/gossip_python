@@ -6,8 +6,7 @@ import socket
 import logging
 
 def get_time():
-    ticks = time.time()
-    return math.floor(ticks * 1000)   # in milliseconds
+    return int(time.time() * 1000)   # in milliseconds
 
 def is_valid_ipv4_address(address):
     try:
