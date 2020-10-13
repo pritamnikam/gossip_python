@@ -32,7 +32,7 @@ class Address:
         return f'{self.ip}:{self.port}'
 
     def to_multiaddr(self):
-        return f'/ip/{self.ip}/port/{self.port}'
+        return f'/ip4/{self.ip}/udp/{self.port}'
 
     def port_number(self):
         return self.ip
@@ -68,28 +68,3 @@ class Address:
         except Exception as e:
             print('Exception', str(e))
             return False
-
-
-def test():
-    addr = Address()
-    addr.ip = '127.0.0.1'
-    addr.port = 8080
-
-    print(addr.to_string())
-    print(addr.to_multiaddr())
-
-    a = Address.from_string(addr.to_string())
-    print(a.to_multiaddr())
-
-    b = Address.from_multiaddr(addr.to_multiaddr())
-    print(b.to_string())
-
-    encoded_addr = addr.encode()
-
-    c = Address()
-    decoded_bytes = c.decode(encoded_addr)
-
-    print(f'{len(encoded_addr)} and {decoded_bytes} -> {c.to_string()}')
-
-
-# test()

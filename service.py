@@ -228,6 +228,7 @@ class GossipService:
             self.logger.info("[GossipService] Gossip the Status message.")
         else:
             self.logger.info("[GossipService] Enque Status message to %s", recipient.to_multiaddr())
+
         status = message_factory.MessageFactory.getInstance().create(message.MESSAGE_STATUS_TYPE)
         status.data_version.copy(self.data_version)
         spreading_type = config.GOSSIP_DIRECT

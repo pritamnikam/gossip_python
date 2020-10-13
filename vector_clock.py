@@ -1,3 +1,5 @@
+import sys
+
 import config
 import member_address
 import member
@@ -11,6 +13,9 @@ class VectorRecord:
     def __init__(self, sequence_number = 0, member_id = ''):
         self.sequence_number = sequence_number
         self.member_id = member_id
+
+    def size(self):
+        return sys.getsizeof(self.sequence_number) + len(self.member_id)
 
     def decode(self, buffer):
         self.sequence_number = int(buffer[:4].decode(config.FORMAT).strip()) # 4-bytes
@@ -34,43 +39,61 @@ class VectorRecord:
 class VectorClock:
     def __init__(self):
         self.current_idx = 0
-        self.records = []
+        self.records = []  # VectorRecord
+        self.cache = {}    # map<member_id, VectorRecord>
+        self.capacity = config.MESSAGE_MAX_SIZE
     
+    def size(self):
+        total_size = 0
+        for record in self.records:
+           total_size += record.size()
+
+        return total_size
+
     def find_record(self, member):
         member_id = create_member_id(member)
         if not member_id:
             return False
 
-        record = self.find_by_member_id(member_id)
-        if not record:
+        if not member_id in self.cache:
             return False
 
-        return record
-
-    def set_sequence_number_by_id(self, member_id, seq_num):
-        record = self.find_by_member_id(member_id)
-        if not record:
-            # insert (or override) the latest record with the new record.
-            record = VectorRecord(seq_num, member_id)
-            self.records.append(record)
-            return record
-
-        record.sequence_number = seq_num
-        return record
+        return self.cache[member_id]
 
     def set_sequence_number_for_member(self, member, seq_num):
         member_id = create_member_id(member)
-        if not member_id:
-            return False
-        
         return self.set_sequence_number_by_id(member_id, seq_num)
+        
+    def set_sequence_number_by_id(self, member_id, sequence_number):
+        # insert (or override) the latest record with the new record.
+        if not member_id in self.cache:
+            # Add the entry to records
+            record = VectorRecord(sequence_number, member_id)
+            
+            # capacity full
+            if self.size() >= self.capacity:
+                self.records.pop()
+
+        else:
+            record = self.cache[member_id]
+            self.records.remove(record)
+            record.sequence_number = sequence_number
+
+        self.cache[member_id] = record
+        self.records.insert(0, record)
+        return record
+
 
     def increment_sequence_number_for_member(self, member):
+        member_id = create_member_id(member)
         record = self.find_record(member)
         if not record:
             return False
         
+        del self.records[record]
         record.sequence_number += 1
+        self.cache[member_id] = record
+        self.records.insert(0, record)
         return record
 
     def to_string(self):
@@ -166,35 +189,3 @@ class VectorClock:
 def create_member_id(member):
     return f'{member.address.to_multiaddr()}/uid/{member.uid}'
 
-def test():
-    m = member.Member()
-    m.uid = '3243'
-    m.address = member_address.from_string('127.0.0.1:8080')
-
-    vr = VectorRecord()
-    vr.sequence_number = 100
-    vr.member_id = create_member_id(m)
-
-    encoded_member = vr.encode()
-    vr2 = VectorRecord()
-    bytes_decoded = vr2.decode(encoded_member)
-
-    print(f'{len(encoded_member)} and {bytes_decoded} -> {vr2.to_string()}')
-
-
-    vc = VectorClock()
-    vc.current_idx = 11
-    vc.set_sequence_number_for_member(m, 100)
-
-    print(vc.to_string())
-
-    encoded_member = vc.encode()
-    vc2 = VectorClock()
-    bytes_decoded = vc2.decode(encoded_member)
-
-    print(f'{len(encoded_member)} and {bytes_decoded} -> {vc2.to_string()}')
-
-    res = vc.compare_with_record(vr, True)
-    print(res)
-
-# test()

@@ -61,7 +61,7 @@ import util
 Now instantiate a Gossip Protocol service and address of the current node and a data receiver callback:
 ```python
 # Filling in the address of the current node.
-my_address = member_address.Address.from_multiaddr('/ip/127.0.0.1/port/7070')
+my_address = member_address.Address.from_multiaddr('/ip4/127.0.0.1/udp/7070')
 
 # A log file to collect debug logs
 log_file = 'demo_log_file.txt'
@@ -88,7 +88,7 @@ There are 2 ways to do this:
 2) specify nothing if this instance is going to be a seed node in itself.
 ```python
 # Provide a seed node destination address.
-seed_node_address = member_address.Address.from_multiaddr('/ip/127.0.0.1/port/8080')
+seed_node_address = member_address.Address.from_multiaddr('/ip4/127.0.0.1/udp/8080')
 
 # Join a cluster.
 join_result = gossip_daemon.join([seed_node_address])
